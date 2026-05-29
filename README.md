@@ -2,7 +2,7 @@
 
 Public, customer-shareable documentation for **Microsoft Defender for Office 365 (MDO)**.
 
-This repository is intended to hold guidance, runbooks, deployment notes, and reference material that is safe to share publicly with customers and partners. Anything sensitive, internal-only, or customer-attributable lives in the **private** counterpart of this repo.
+This repository holds guidance, runbooks, deployment notes, and reference material that is safe to share publicly with customers and partners. Anything sensitive, internal-only, or customer-attributable lives in the **private** counterpart of this repo.
 
 ## What you'll find here
 
@@ -11,7 +11,7 @@ This repository is intended to hold guidance, runbooks, deployment notes, and re
 - Reference links to official Microsoft Learn documentation
 - Sanitized examples and patterns from real-world engagements
 
-## What you will *not* find here
+## What you will not find here
 
 - Customer names, tenant IDs, or any customer-identifying data
 - Internal Microsoft-only material
