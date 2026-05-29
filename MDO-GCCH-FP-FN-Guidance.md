@@ -16,18 +16,18 @@ To obtain a true Microsoft verdict on an FP/FN — or to push intelligence back 
 
 | Capability | GCC High |
 |---|---|
-| User "Report" button routed to Microsoft | Disabled — boundary |
+| User "Report" button routed to Microsoft | **Disabled — boundary** |
 | User "Report" button routed to internal reporting mailbox | Yes (only option) |
-| User reporting in Microsoft Teams | No |
+| User reporting in Microsoft Teams | **No** |
 | Admin Submissions page UI at `security.microsoft.us` | Yes |
 | Submission runs SPF/DKIM/DMARC + policy hit checks | Yes |
-| Submission runs URL / attachment detonation | No |
-| Submission runs human grader (SME) review | No |
-| Submission returns an actionable Microsoft verdict | No — "contact support" |
+| Submission runs URL / attachment detonation | **No** |
+| Submission runs human grader (SME) review | **No** |
+| Submission returns an actionable Microsoft verdict | **No — "contact support"** |
 | Tenant Allow/Block List entry from submission | Yes (GA July 2024) |
 | Automated Investigation & Response (AIR) on user reports | Yes (Defender for Office 365 Plan 2) |
-| Defender unified RBAC for MDO | Not GA |
-| Security Copilot Phishing Triage Agent | No |
+| Defender unified RBAC for MDO | **Not GA** |
+| Security Copilot Phishing Triage Agent | **No** |
 
 ## Recommended FP/FN workflow in GCC High
 
