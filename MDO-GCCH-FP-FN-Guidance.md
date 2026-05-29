@@ -2,7 +2,7 @@
 
 ## Summary
 
-In **GCC High**, the FedRAMP High / IL5 data boundary changes how false-positive (FP) and false-negative (FN) submissions to Microsoft work in Defender for Office 365 (MDO):
+In GCC High, the FedRAMP High / IL5 data boundary changes how false-positive (FP) and false-negative (FN) submissions to Microsoft work in Defender for Office 365 (MDO):
 
 - End users **cannot** send reported messages to Microsoft from Outlook — that routing option is disabled by policy. Reported mail can only be delivered to a designated **internal reporting mailbox**.
 - User reporting in **Microsoft Teams** is **not available**.
@@ -10,7 +10,7 @@ In **GCC High**, the FedRAMP High / IL5 data boundary changes how false-positive
 - Every admin submission returns the same result text:
   > *"Further investigation needed. Your tenant doesn't allow data to leave the environment, so nothing was found during the initial scan. You'll need to contact Microsoft support to have this item reviewed."*
 
-To obtain a true Microsoft verdict on an FP/FN — or to push intelligence back into the global service — a **Microsoft Support case** must be opened from the GCC High admin portal and the sample provided through that channel.
+To obtain a true Microsoft verdict on an FP/FN — or to push intelligence back into the global service — a Microsoft Support case must be opened from the GCC High admin portal and the sample provided through that channel.
 
 ## What works vs. what doesn't in GCC High
 
