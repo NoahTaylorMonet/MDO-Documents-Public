@@ -1,0 +1,242 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "logicAppName":        { "type": "string" },
+    "location":            { "type": "string", "defaultValue": "[resourceGroup().location]" },
+    "functionAppUrl":      { "type": "string", "metadata": { "description": "Full URL of the Parse-EML function" } },
+    "functionKey":         { "type": "securestring" },
+    "reportingMailbox":    { "type": "string", "defaultValue": "phish-report@contoso.us" },
+    "serviceNowInstance":  { "type": "string", "defaultValue": "" , "metadata": { "description": "e.g. mytenant.service-now.us. Leave empty to disable ITSM branch." } },
+    "serviceNowAuth":      { "type": "securestring", "defaultValue": "", "metadata": { "description": "Base64(user:pass) for ServiceNow basic auth" } },
+    "teamsWebhookUrl":     { "type": "securestring", "defaultValue": "", "metadata": { "description": "Incoming webhook URL for the SecOps Teams channel. Leave empty to disable Teams branch." } },
+    "adminEmail":          { "type": "string", "defaultValue": "secops-admins@contoso.us" },
+    "office365ConnectionName": { "type": "string", "defaultValue": "office365" }
+  },
+  "variables": {
+    "office365ConnectionId": "[resourceId('Microsoft.Web/connections', parameters('office365ConnectionName'))]",
+    "office365ManagedApiId": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.Web/locations/', parameters('location'), '/managedApis/office365')]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Web/connections",
+      "apiVersion": "2016-06-01",
+      "name": "[parameters('office365ConnectionName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "displayName": "Office 365 (reporting mailbox)",
+        "api": { "id": "[variables('office365ManagedApiId')]" }
+      }
+    },
+    {
+      "type": "Microsoft.Logic/workflows",
+      "apiVersion": "2019-05-01",
+      "name": "[parameters('logicAppName')]",
+      "location": "[parameters('location')]",
+      "dependsOn": [ "[variables('office365ConnectionId')]" ],
+      "properties": {
+        "state": "Enabled",
+        "definition": {
+          "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+          "contentVersion": "1.0.0.0",
+          "parameters": {
+            "$connections": { "defaultValue": {}, "type": "Object" },
+            "functionAppUrl":     { "type": "String", "defaultValue": "[parameters('functionAppUrl')]" },
+            "functionKey":        { "type": "SecureString", "defaultValue": "[parameters('functionKey')]" },
+            "reportingMailbox":   { "type": "String", "defaultValue": "[parameters('reportingMailbox')]" },
+            "serviceNowInstance": { "type": "String", "defaultValue": "[parameters('serviceNowInstance')]" },
+            "serviceNowAuth":     { "type": "SecureString", "defaultValue": "[parameters('serviceNowAuth')]" },
+            "teamsWebhookUrl":    { "type": "SecureString", "defaultValue": "[parameters('teamsWebhookUrl')]" },
+            "adminEmail":         { "type": "String", "defaultValue": "[parameters('adminEmail')]" }
+          },
+          "triggers": {
+            "When_a_new_email_arrives_in_shared_mailbox": {
+              "type": "ApiConnection",
+              "recurrence": { "frequency": "Minute", "interval": 1 },
+              "inputs": {
+                "host": { "connection": { "name": "@parameters('$connections')['office365']['connectionId']" } },
+                "method": "get",
+                "path": "/v2/SharedMailbox/Mail/OnNewEmail",
+                "queries": {
+                  "folderPath": "Inbox",
+                  "mailboxAddress": "@parameters('reportingMailbox')",
+                  "includeAttachments": true,
+                  "hasAttachments": true
+                }
+              }
+            }
+          },
+          "actions": {
+            "Filter_eml_attachments": {
+              "type": "Query",
+              "inputs": {
+                "from": "@triggerBody()?['Attachments']",
+                "where": "@or(endsWith(toLower(item()?['Name']),'.eml'), endsWith(toLower(item()?['Name']),'.msg'))"
+              },
+              "runAfter": {}
+            },
+            "Stop_if_no_eml": {
+              "type": "If",
+              "expression": { "and": [ { "equals": [ "@length(body('Filter_eml_attachments'))", 0 ] } ] },
+              "actions": {
+                "Terminate": { "type": "Terminate", "inputs": { "runStatus": "Succeeded" } }
+              },
+              "runAfter": { "Filter_eml_attachments": [ "Succeeded" ] }
+            },
+            "Parse_EML": {
+              "type": "Http",
+              "inputs": {
+                "method": "POST",
+                "uri": "@parameters('functionAppUrl')",
+                "headers": {
+                  "x-functions-key": "@parameters('functionKey')",
+                  "Content-Type": "application/json"
+                },
+                "body": {
+                  "eml": "@first(body('Filter_eml_attachments'))?['ContentBytes']"
+                }
+              },
+              "runAfter": { "Stop_if_no_eml": [ "Succeeded" ] }
+            },
+            "Parsed": {
+              "type": "ParseJson",
+              "inputs": {
+                "content": "@body('Parse_EML')",
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "networkMessageId":  { "type": "string" },
+                    "internetMessageId": { "type": "string" },
+                    "dateUtc":           { "type": "string" },
+                    "fromAddress":       { "type": "string" },
+                    "toAddresses":       { "type": "string" },
+                    "subject":           { "type": "string" },
+                    "urls":              { "type": "array", "items": { "type": "string" } },
+                    "attachments": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "filename":    { "type": "string" },
+                          "contentType": { "type": "string" },
+                          "sha256":      { "type": "string" },
+                          "sizeBytes":   { "type": "integer" }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "runAfter": { "Parse_EML": [ "Succeeded" ] }
+            },
+            "Build_case_packet": {
+              "type": "Compose",
+              "inputs": "@{concat(\n  '## MDO GCCH FP/FN — case packet\n\n',\n  '- Reported by: ', triggerBody()?['From'], '\n',\n  '- Reported at (UTC): ', utcNow(), '\n',\n  '- Subject: ', body('Parsed')?['subject'], '\n',\n  '- From: ', body('Parsed')?['fromAddress'], '\n',\n  '- To: ', body('Parsed')?['toAddresses'], '\n',\n  '- Date (UTC): ', body('Parsed')?['dateUtc'], '\n',\n  '- Network Message ID: `', coalesce(body('Parsed')?['networkMessageId'],'(not present)'), '`\n',\n  '- Internet Message ID: `', body('Parsed')?['internetMessageId'], '`\n\n',\n  '### URLs\n',\n  if(equals(length(body('Parsed')?['urls']),0), '(none extracted)\n', join(body('Parsed')?['urls'], '\n')),\n  '\n\n### Attachments\n',\n  string(body('Parsed')?['attachments']),\n  '\n\n### Recommended action\n',\n  '1. Triage in Defender portal (Submissions → User reported).\n',\n  '2. Apply TABL allow/block as appropriate.\n',\n  '3. If a Microsoft verdict is required, open a support case at https://portal.office365.us/AdminPortal/Home#/support/cases/create and paste this packet.\n'\n)}",
+              "runAfter": { "Parsed": [ "Succeeded" ] }
+            },
+            "Fan_out_notifications": {
+              "type": "Scope",
+              "actions": {
+                "Branch_ITSM_ServiceNow": {
+                  "type": "If",
+                  "expression": { "and": [ { "not": { "equals": [ "@parameters('serviceNowInstance')", "" ] } } ] },
+                  "actions": {
+                    "Create_ServiceNow_incident": {
+                      "type": "Http",
+                      "inputs": {
+                        "method": "POST",
+                        "uri": "@{concat('https://', parameters('serviceNowInstance'), '/api/now/table/incident')}",
+                        "headers": {
+                          "Authorization": "@{concat('Basic ', parameters('serviceNowAuth'))}",
+                          "Accept": "application/json",
+                          "Content-Type": "application/json"
+                        },
+                        "body": {
+                          "short_description": "@{concat('MDO user-reported: ', body('Parsed')?['subject'])}",
+                          "description":       "@{outputs('Build_case_packet')}",
+                          "category":          "security",
+                          "subcategory":       "email_phishing",
+                          "urgency":           "3",
+                          "impact":            "3",
+                          "assignment_group":  "SecOps Email"
+                        }
+                      }
+                    }
+                  }
+                },
+                "Branch_Teams_channel": {
+                  "type": "If",
+                  "expression": { "and": [ { "not": { "equals": [ "@parameters('teamsWebhookUrl')", "" ] } } ] },
+                  "actions": {
+                    "Post_adaptive_card_to_Teams": {
+                      "type": "Http",
+                      "inputs": {
+                        "method": "POST",
+                        "uri": "@parameters('teamsWebhookUrl')",
+                        "headers": { "Content-Type": "application/json" },
+                        "body": {
+                          "type": "message",
+                          "attachments": [
+                            {
+                              "contentType": "application/vnd.microsoft.card.adaptive",
+                              "content": {
+                                "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                                "type": "AdaptiveCard",
+                                "version": "1.4",
+                                "body": [
+                                  { "type": "TextBlock", "size": "Medium", "weight": "Bolder", "text": "MDO user-reported message" },
+                                  { "type": "TextBlock", "wrap": true, "text": "@{concat('Subject: ', body('Parsed')?['subject'])}" },
+                                  { "type": "TextBlock", "wrap": true, "isSubtle": true, "text": "@{concat('From: ', body('Parsed')?['fromAddress'], '  |  NMID: ', coalesce(body('Parsed')?['networkMessageId'],'(none)'))}" },
+                                  { "type": "TextBlock", "wrap": true, "fontType": "Monospace", "text": "@{outputs('Build_case_packet')}" }
+                                ],
+                                "actions": [
+                                  { "type": "Action.OpenUrl", "title": "Open GCCH support portal", "url": "https://portal.office365.us/AdminPortal/Home#/support/cases/create" },
+                                  { "type": "Action.OpenUrl", "title": "Defender submissions",     "url": "https://security.microsoft.us/reportsubmission" }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                },
+                "Branch_Email_tenant_admins": {
+                  "type": "ApiConnection",
+                  "inputs": {
+                    "host": { "connection": { "name": "@parameters('$connections')['office365']['connectionId']" } },
+                    "method": "post",
+                    "path": "/v2/Mail",
+                    "body": {
+                      "To":      "@parameters('adminEmail')",
+                      "Subject": "@{concat('[MDO GCCH] User-reported message: ', body('Parsed')?['subject'])}",
+                      "Body":    "@{replace(outputs('Build_case_packet'), '\n', '<br>')}",
+                      "Importance": "Normal",
+                      "IsHtml": true
+                    }
+                  }
+                }
+              },
+              "runAfter": { "Build_case_packet": [ "Succeeded" ] }
+            }
+          },
+          "outputs": {}
+        },
+        "parameters": {
+          "$connections": {
+            "value": {
+              "office365": {
+                "connectionId":   "[variables('office365ConnectionId')]",
+                "connectionName": "[parameters('office365ConnectionName')]",
+                "id":             "[variables('office365ManagedApiId')]"
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "logicAppResourceId": { "type": "string", "value": "[resourceId('Microsoft.Logic/workflows', parameters('logicAppName'))]" }
+  }
+}
