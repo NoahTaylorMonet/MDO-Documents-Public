@@ -10,6 +10,7 @@ This repository holds guidance, runbooks, deployment notes, and reference materi
 - Operational runbooks and troubleshooting steps
 - Reference links to official Microsoft Learn documentation
 - Sanitized examples and patterns from real-world engagements
+- KQL
 
 ## What you will not find here
 
